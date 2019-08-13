@@ -111,6 +111,42 @@ class TorchGeneratorModel(nn.Module, ABC):
         logits = torch.cat(logits, 1)
         return logits, xs
 
+    def decode_latent(self, encoder_states, ys):
+        """
+        Decode with a fixed, true sequence, computing loss.
+
+        Useful for training, or ranking fixed candidates.
+
+        :param ys:
+            the prediction targets. Contains both the start and end tokens.
+
+        :type ys:
+            LongTensor[bsz, time]
+
+        :param encoder_states:
+            Output of the encoder. Model specific types.
+
+        :type encoder_states:
+            model specific
+
+        :return:
+            pair (logits, choices) containing the logits and MLE predictions
+
+        :rtype:
+            (FloatTensor[bsz, ys, vocab], LongTensor[bsz, ys])
+        """
+        bsz = ys.size(0)
+        seqlen = ys.size(1)
+        inputs = ys.narrow(1, 0, seqlen - 1)
+        _,  hidden_states, _ = encoder_states
+        last_layer_hidden_state = hidden_states[1][:,-1,:]
+        inputs = torch.cat([self._starts(bsz), inputs], 1)
+        latent, _ = self.decoder(inputs, encoder_states)
+        last_latent = latent[:,-1,:]
+        #score = torch.mm(last_latent, last_layer_hidden_state.transpose(1, 0)).squeeze(0)
+        score = torch.bmm(last_latent.unsqueeze(1), last_layer_hidden_state.unsqueeze(-1)).squeeze(-1).squeeze(-1)
+        return score
+
     def decode_forced(self, encoder_states, ys):
         """
         Decode with a fixed, true sequence, computing loss.
@@ -272,7 +308,15 @@ class TorchGeneratorModel(nn.Module, ABC):
 
         if ys is not None:
             # use teacher forcing
-            scores, preds = self.decode_forced(encoder_states, ys)
+            #scores, preds = self.decode_forced(encoder_states, ys)
+            all_t = torch.empty(1, ys.size(0)).cuda()
+            preds = 0
+            for y in ys.unbind(dim=1): #unbind for different canidates
+                latent = self.decode_latent(encoder_states, y)
+                #all_t = torch.stack([all_t, latent])
+                all_t = torch.cat([all_t, latent.unsqueeze(0)], dim=0)
+            scores = all_t[1:]
+            scores = scores.transpose(1, 0)
         else:
             scores, preds = self.decode_greedy(
                 encoder_states,

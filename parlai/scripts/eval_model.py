@@ -62,6 +62,7 @@ def _eval_single_world(opt, agent, task):
     log_time = TimeLogger()
 
     # max number of examples to evaluate
+    opt['num_examples'] = world.num_examples() #todo added by rooh
     max_cnt = opt['num_examples'] if opt['num_examples'] > 0 else float('inf')
     cnt = 0
 

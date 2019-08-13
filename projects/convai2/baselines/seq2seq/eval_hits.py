@@ -19,7 +19,7 @@ def main():
         dict_file='models:convai2/seq2seq/convai2_self_seq2seq_model.dict',
         dict_lower=True,
         rank_candidates=True,
-        batchsize=32,
+        batchsize=8,
     )
     opt = parser.parse_args(print_args=False)
     if (opt.get('model_file', '')

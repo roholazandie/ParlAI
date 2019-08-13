@@ -52,7 +52,7 @@ class Seq2seq(TorchGeneratorModel):
     RNN_OPTS = {'rnn': nn.RNN, 'gru': nn.GRU, 'lstm': nn.LSTM}
 
     def __init__(
-        self, num_features, embeddingsize, hiddensize, numlayers=5, dropout=0,
+        self, num_features, embeddingsize, hiddensize, numlayers=2, dropout=0,
         bidirectional=False, rnn_class='lstm', lookuptable='unique',
         decoder='same', numsoftmax=1,
         attention='none', attention_length=48, attention_time='post',
@@ -63,7 +63,6 @@ class Seq2seq(TorchGeneratorModel):
 
         See cmdline args in Seq2seqAgent for description of arguments.
         """
-        numlayers = 5 #todo added by rohola (remove it)
         super().__init__(
             padding_idx=padding_idx,
             start_idx=start_idx,
@@ -175,7 +174,7 @@ class RNNEncoder(nn.Module):
     """RNN Encoder."""
 
     def __init__(self, num_features, embeddingsize, hiddensize,
-                 padding_idx=0, rnn_class='lstm', numlayers=5, dropout=0.1,
+                 padding_idx=0, rnn_class='lstm', numlayers=2, dropout=0.1,
                  bidirectional=False, shared_lt=None, shared_rnn=None,
                  input_dropout=0, unknown_idx=None, sparse=False):
         """Initialize recurrent encoder."""
@@ -257,7 +256,7 @@ class RNNDecoder(nn.Module):
     """
 
     def __init__(self, num_features, embeddingsize, hiddensize,
-                 padding_idx=0, rnn_class='lstm', numlayers=5, dropout=0.1,
+                 padding_idx=0, rnn_class='lstm', numlayers=2, dropout=0.1,
                  bidir_input=False, attn_type='none', attn_time='pre',
                  attn_length=-1, sparse=False):
         """Initialize recurrent decoder."""
