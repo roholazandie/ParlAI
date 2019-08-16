@@ -23,33 +23,38 @@ class WizardTransformerRankerAgent(TransformerRankerAgent):
         super(WizardTransformerRankerAgent, cls).add_cmdline_args(argparser)
         agent = argparser.add_argument_group('Wizard Transformer Ranker Arguments')
         agent.add_argument(
-            '--use-knowledge', type='bool', default=True,
-            help='use knowledge field instead of personas'
+            '--use-knowledge',
+            type='bool',
+            default=True,
+            help='use knowledge field instead of personas',
         )
         agent.add_argument(
-            '--knowledge-dropout', type=float, default=0.7,
-            help='dropout some knowledge during training'
+            '--knowledge-dropout',
+            type=float,
+            default=0.7,
+            help='dropout some knowledge during training',
         )
         agent.add_argument(
-            '--chosen-sentence', type='bool', default=False,
+            '--chosen-sentence',
+            type='bool',
+            default=False,
             help='instead of using all knowledge, use gold'
-                 'label, i.e. the chosen sentence'
+            'label, i.e. the chosen sentence',
         )
         agent.add_argument(
-            '--knowledge-truncate', type=int, default=50,
-            help='truncate knowledge to this length'
+            '--knowledge-truncate',
+            type=int,
+            default=50,
+            help='truncate knowledge to this length',
         )
-        agent.add_argument(
-            '--legacy', type='bool', default=False,
-            help='legacy model'
-        )
+        agent.add_argument('--legacy', type='bool', default=False, help='legacy model')
         argparser.set_defaults(
             learningrate=0.0008,
             eval_candidates='inline',
             candidates='batch',
             lr_factor=1,
             add_p1_after_newln=False,
-            delimiter=' '
+            delimiter=' ',
         )
 
         return agent
@@ -61,8 +66,7 @@ class WizardTransformerRankerAgent(TransformerRankerAgent):
         self.use_knowledge = opt.get('use_knowledge', False)
         if self.use_knowledge:
             self.opt['use_memories'] = True
-        self.chosen_sentence = (opt.get('chosen_sentence', False) and
-                                self.use_knowledge)
+        self.chosen_sentence = opt.get('chosen_sentence', False) and self.use_knowledge
         self.knowledge_dropout = opt.get('knowledge_dropout', 0)
         self.knowledge_truncate = opt.get('knowledge_truncate', 50)
 
@@ -73,9 +77,10 @@ class WizardTransformerRankerAgent(TransformerRankerAgent):
         Useful to override to change vectorization behavior
         """
         obs = super()._set_text_vec(*args, **kwargs)
-        if self.opt.get('legacy'):
-            soc_tensor = torch.LongTensor([self.dict[SOC_TOKEN]])
-            obs['text_vec'] = torch.cat([soc_tensor, obs['text_vec']])
+        if self.opt.get('legacy') and 'text_vec' in obs:
+            if obs['text_vec'][0] != self.dict[SOC_TOKEN]:
+                soc_tensor = torch.LongTensor([self.dict[SOC_TOKEN]])
+                obs.force_set('text_vec', torch.cat([soc_tensor, obs['text_vec']]))
         return obs
 
     def _vectorize_memories(self, observation):
@@ -97,8 +102,7 @@ class WizardTransformerRankerAgent(TransformerRankerAgent):
         if checked and self.chosen_sentence:
             # if `self.chosen_sentence` is True, only keep golden knowledge
             to_vectorize = [checked]
-        elif (self.knowledge_dropout == 0 or
-                observation.get('eval_labels') is not None) and knowledge:
+        elif (self.knowledge_dropout == 0 or not self.is_training) and knowledge:
             # during evaluation we use all of the knowledge
             to_vectorize = knowledge
         elif knowledge:
@@ -113,10 +117,13 @@ class WizardTransformerRankerAgent(TransformerRankerAgent):
                     to_vectorize.append(line)
 
         # vectorize knowledge
-        observation['memory_vecs'] = [
-            self._vectorize_text(line, truncate=self.knowledge_truncate) for
-            line in to_vectorize
-        ]
+        observation.force_set(
+            'memory_vecs',
+            [
+                self._vectorize_text(line, truncate=self.knowledge_truncate)
+                for line in to_vectorize
+            ],
+        )
         return observation
 
     def load(self, path):
@@ -132,9 +139,9 @@ class WizardTransformerRankerAgent(TransformerRankerAgent):
             # load params
             current_state = self.model.state_dict()
             # filter out unnecessary params
-            pre_trained_state = {k: v for k, v in
-                                 new_state_dict.items() if k in
-                                 current_state}
+            pre_trained_state = {
+                k: v for k, v in new_state_dict.items() if k in current_state
+            }
             # upload pretrained state
             current_state.update(pre_trained_state)
             self.model.load_state_dict(current_state)

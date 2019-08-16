@@ -133,10 +133,8 @@ WEB_HTML = """
 
 
 class MyHandler(BaseHTTPRequestHandler):
-
     def interactive_running(self, opt, reply_text):
-        reply = {}
-        reply['text'] = reply_text
+        reply = {'episode_done': False, 'text': reply_text}
         SHARED['agent'].observe(reply)
         model_res = SHARED['agent'].act()
         return model_res
@@ -153,8 +151,7 @@ class MyHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers['Content-Length'])
         body = self.rfile.read(content_length)
         model_response = self.interactive_running(
-            SHARED.get('opt'),
-            body.decode('utf-8')
+            SHARED.get('opt'), body.decode('utf-8')
         )
 
         self.send_response(200)
@@ -166,7 +163,7 @@ class MyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         paths = {
             '/': {'status': 200},
-            '/favicon.ico': {'status': 202},    # Need for chrome
+            '/favicon.ico': {'status': 202},  # Need for chrome
         }
         if self.path in paths:
             self.respond(paths[self.path])
@@ -177,10 +174,7 @@ class MyHandler(BaseHTTPRequestHandler):
         self.send_response(status_code)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
-        content = WEB_HTML.format(
-            STYLE_SHEET,
-            FONT_AWESOME,
-        )
+        content = WEB_HTML.format(STYLE_SHEET, FONT_AWESOME)
         return bytes(content, 'UTF-8')
 
     def respond(self, opts):

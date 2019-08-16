@@ -10,7 +10,7 @@ from parlai.tasks.light_dialog.builder import build_from_db
 
 
 def download(opt):
-    version = 'v2.02'
+    version = 'v2.03'
     # download pickled database
     dpath = os.path.join(opt['datapath'], 'light_dialogue')
     if not build_data.built(dpath, version):
@@ -20,8 +20,7 @@ def download(opt):
             build_data.remove_dir(dpath)
         build_data.make_dir(dpath)
         # Download the data.
-        url = ('http://parl.ai/downloads/light/' +
-               'light-dialog-processed-small7.pkl')
+        url = 'http://parl.ai/downloads/light/' + 'light-dialog-processed-small7.pkl'
         fname = 'light_data.pkl'
         build_data.download(url, dpath, fname)
         # Download the unseen data.
@@ -52,6 +51,7 @@ def build(opt):
         'emote',
         'speech',
         'action',
+        'affordances',
         'repeat',
         'cands',
         'current_self_output',

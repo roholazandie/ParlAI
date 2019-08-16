@@ -27,25 +27,38 @@ class MemnnAgent(TorchRankerAgent):
     def add_cmdline_args(argparser):
         arg_group = argparser.add_argument_group('MemNN Arguments')
         arg_group.add_argument(
-            '-esz', '--embedding-size', type=int, default=128,
-            help='size of token embeddings')
+            '-esz',
+            '--embedding-size',
+            type=int,
+            default=128,
+            help='size of token embeddings',
+        )
         arg_group.add_argument(
-            '-hops', '--hops', type=int, default=3,
-            help='number of memory hops')
+            '-hops', '--hops', type=int, default=3, help='number of memory hops'
+        )
         arg_group.add_argument(
-            '--memsize', type=int, default=32,
+            '--memsize',
+            type=int,
+            default=32,
             help='size of memory, set to 0 for "nomemnn" model which just '
-                 'embeds query and candidates and picks most similar candidate')
+            'embeds query and candidates and picks most similar candidate',
+        )
         arg_group.add_argument(
-            '-tf', '--time-features', type='bool', default=True,
-            help='use time features for memory embeddings')
+            '-tf',
+            '--time-features',
+            type='bool',
+            default=True,
+            help='use time features for memory embeddings',
+        )
         arg_group.add_argument(
-            '-pe', '--position-encoding', type='bool', default=False,
-            help='use position encoding instead of bag of words embedding')
+            '-pe',
+            '--position-encoding',
+            type='bool',
+            default=False,
+            help='use position encoding instead of bag of words embedding',
+        )
         argparser.set_defaults(
-            split_lines=True,
-            add_p1_after_newln=True,
-            encode_candidate_vecs=True,
+            split_lines=True, add_p1_after_newln=True, encode_candidate_vecs=True
         )
         TorchRankerAgent.add_cmdline_args(argparser)
         MemnnAgent.dictionary_class().add_cmdline_args(argparser)
@@ -84,18 +97,22 @@ class MemnnAgent(TorchRankerAgent):
     def build_model(self):
         """Build MemNN model."""
         kwargs = opt_to_kwargs(self.opt)
-        self.model = MemNN(len(self.dict), self.opt['embedding_size'],
-                           padding_idx=self.NULL_IDX, **kwargs)
+        self.model = MemNN(
+            len(self.dict),
+            self.opt['embedding_size'],
+            padding_idx=self.NULL_IDX,
+            **kwargs,
+        )
 
     def _score(self, output, cands):
         if cands.dim() == 2:
             return torch.matmul(output, cands.t())
         elif cands.dim() == 3:
-            return torch.bmm(output.unsqueeze(1),
-                             cands.transpose(1, 2)).squeeze(1)
+            return torch.bmm(output.unsqueeze(1), cands.transpose(1, 2)).squeeze(1)
         else:
-            raise RuntimeError('Unexpected candidate dimensions {}'
-                               ''.format(cands.dim()))
+            raise RuntimeError(
+                'Unexpected candidate dimensions {}' ''.format(cands.dim())
+            )
 
     def encode_candidates(self, padded_cands):
         return self.model.answer_embedder(padded_cands)
@@ -110,8 +127,7 @@ class MemnnAgent(TorchRankerAgent):
         if cand_encs is not None:
             state, _ = self.model(batch.text_vec, mems, None, pad_mask)
         else:
-            state, cand_encs = self.model(batch.text_vec, mems, cand_vecs,
-                                          pad_mask)
+            state, cand_encs = self.model(batch.text_vec, mems, cand_vecs, pad_mask)
         scores = self._score(state, cand_encs)
 
         return scores
@@ -132,8 +148,7 @@ class MemnnAgent(TorchRankerAgent):
         batch = super().batchify(obs_batch, sort)
 
         # get valid observations
-        valid_obs = [(i, ex) for i, ex in enumerate(obs_batch) if
-                     self.is_valid(ex)]
+        valid_obs = [(i, ex) for i, ex in enumerate(obs_batch) if self.is_valid(ex)]
 
         if len(valid_obs) == 0:
             return batch
@@ -154,7 +169,7 @@ class MemnnAgent(TorchRankerAgent):
 
         if 'text_vec' not in obs:
             # text vec is not precomputed, so we set it using the history
-            obs['text'] = history.get_history_str()
+            obs['full_text'] = history.get_history_str()
             history_vecs = history.get_history_vec_list()
             if len(history_vecs) > 0:
                 obs['memory_vecs'] = history_vecs[:-1]
@@ -165,16 +180,17 @@ class MemnnAgent(TorchRankerAgent):
 
         # check truncation
         if 'text_vec' in obs:
-            obs['text_vec'] = torch.LongTensor(
-                self._check_truncate(obs['text_vec'], truncate, True)
-            )
+            truncated_vec = self._check_truncate(obs['text_vec'], truncate, True)
+            obs.force_set('text_vec', torch.LongTensor(truncated_vec))
 
         if 'memory_vecs' in obs:
-            obs['memory_vecs'] = [
-                torch.LongTensor(
-                    self._check_truncate(m, truncate, True)
-                ) for m in obs['memory_vecs']
-            ]
+            obs.force_set(
+                'memory_vecs',
+                [
+                    torch.LongTensor(self._check_truncate(m, truncate, True))
+                    for m in obs['memory_vecs']
+                ],
+            )
 
         return obs
 
@@ -203,7 +219,7 @@ class MemnnAgent(TorchRankerAgent):
         elif num_mems > self.memsize:
             # truncate to memsize most recent memories
             num_mems = self.memsize
-            mems = [mem[-self.memsize:] for mem in mems]
+            mems = [mem[-self.memsize :] for mem in mems]
 
         try:
             seqlen = max(len(m) for mem in mems for m in mem)
@@ -217,7 +233,7 @@ class MemnnAgent(TorchRankerAgent):
         for i, mem in enumerate(mems):
             tf_offset = len(mem) - 1
             for j, m in enumerate(mem):
-                padded[i, j, :len(m)] = m
+                padded[i, j, : len(m)] = m
                 if self.use_time_features:
                     padded[i, j, -1] = self.dict[self._time_feature(tf_offset - j)]
 

@@ -4,12 +4,14 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
-from parlai.core.utils import Timer
-from parlai.core.utils import round_sigfigs
-from parlai.core.utils import set_namedtuple_defaults
-from parlai.core.utils import padded_tensor
-from parlai.core.utils import argsort
-from parlai.core.utils import Opt
+from parlai.core.utils import (
+    Timer,
+    round_sigfigs,
+    set_namedtuple_defaults,
+    padded_tensor,
+    argsort,
+    Opt,
+)
 from copy import deepcopy
 import time
 import unittest
@@ -74,6 +76,7 @@ class TestUtils(unittest.TestCase):
 
     def test_setnamedtupledefaults(self):
         from collections import namedtuple
+
         NT = namedtuple("NT", ("a", "b", "c"))
 
         # Shouldn't be able to construct a namedtuple without providing info
@@ -114,7 +117,8 @@ class TestUtils(unittest.TestCase):
         items2 = ["e", "d", "c", "b", "a"]
         torch_keys = torch.LongTensor(keys)
         assert argsort(keys, items, items2) == [
-            list(reversed(items)), list(reversed(items2))
+            list(reversed(items)),
+            list(reversed(items2)),
         ]
         assert argsort(keys, items, items2, descending=True) == [items, items2]
 

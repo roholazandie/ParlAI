@@ -14,8 +14,14 @@ from parlai.core.thread_utils import SharedTable
 from parlai.core.utils import round_sigfigs, no_lock
 from collections import Counter
 from parlai.core.utils import warn_once
+from numbers import Number
 
 import re
+
+DEFAULT_METRICS = {'correct', 'bleu', 'accuracy', 'f1'}
+ROUGE_METRICS = {'rouge-1', 'rouge-2', 'rouge-L'}
+ALL_METRICS = DEFAULT_METRICS | ROUGE_METRICS
+
 
 try:
     from nltk.translate import bleu_score as nltkbleu
@@ -25,11 +31,10 @@ except ImportError:
     nltkbleu = None
 
 try:
-    import rouge as rouge
+    import rouge
 except ImportError:
-    # User doesn't have rouge installed, so we can't use it for rouge
-    # We'll just turn off things, but we might want to warn the user
-    warn_once('Rouge metrics require py-rouge. Please run `pip install py-rouge`.')
+    # User doesn't have py-rouge installed, so we can't use it.
+    # We'll just turn off rouge computations
     rouge = None
 
 re_art = re.compile(r'\b(a|an|the)\b')
@@ -38,6 +43,7 @@ re_punc = re.compile(r'[!"#$%&()*+,-./:;<=>?@\[\]\\^`{|}~_\']')
 
 def normalize_answer(s):
     """Lower text and remove punctuation, articles and extra whitespace."""
+
     def remove_articles(text):
         return re_art.sub(' ', text)
 
@@ -53,7 +59,7 @@ def normalize_answer(s):
     return white_space_fix(remove_articles(remove_punc(lower(s))))
 
 
-def aggregate_task_reports(reports, tasks, micro=True):
+def aggregate_task_reports(reports, tasks, micro=False):
     """
     Aggregate separate task reports into a single report.
 
@@ -82,19 +88,19 @@ def aggregate_task_reports(reports, tasks, micro=True):
     total_exs = sum(exs.values())
     total_report['exs'] = total_exs
     for metric, task_vals in metrics.items():
-        if micro:
-            # average over the number of examples
-            vals = [task_vals[task] * exs[task] for task in tasks]
-            total_report[metric] = round_sigfigs(sum(vals) / total_exs, 4)
-        else:  # macro
-            # average over tasks
-            vals = task_vals.values()
-            total_report[metric] = round_sigfigs(sum(vals) / len(vals), 4)
+        if all([isinstance(v, Number) for v in task_vals.values()]):
+            if micro:
+                # average over the number of examples
+                vals = [task_vals[task] * exs[task] for task in tasks]
+                total_report[metric] = round_sigfigs(sum(vals) / total_exs, 4)
+            else:  # macro
+                # average over tasks
+                vals = task_vals.values()
+                total_report[metric] = round_sigfigs(sum(vals) / len(vals), 4)
     # add a warning describing how metrics were averaged across tasks.
     total_report['warning'] = 'metrics are averaged across tasks'
     if micro:
-        total_report['warning'] += (' and weighted by the number of examples '
-                                    'per task')
+        total_report['warning'] += ' and weighted by the number of examples ' 'per task'
     return total_report
 
 
@@ -134,7 +140,7 @@ def _f1_score(guess, answers):
         return 0
     g_tokens = normalize_answer(guess).split()
     scores = [
-        _prec_recall_f1_score(g_tokens, normalize_answer(a).split())for a in answers
+        _prec_recall_f1_score(g_tokens, normalize_answer(a).split()) for a in answers
     ]
     return max(f1 for p, r, f1 in scores)
 
@@ -164,8 +170,10 @@ def _rouge(guess, answers):
         return None, None, None
     evaluator = rouge.Rouge(metrics=['rouge-n', 'rouge-l'], max_n=2)
     try:
-        scores = [evaluator.get_scores(normalize_answer(guess), normalize_answer(a))
-                  for a in answers]
+        scores = [
+            evaluator.get_scores(normalize_answer(guess), normalize_answer(a))
+            for a in answers
+        ]
     except LookupError:
         warn_once(
             'ROUGE requires nltk punkt tokenizer. Please run '
@@ -176,8 +184,8 @@ def _rouge(guess, answers):
 
     scores_rouge1 = [score['rouge-1']['r'] for score in scores]
     scores_rouge2 = [score['rouge-2']['r'] for score in scores]
-    scores_rougel = [score['rouge-l']['r'] for score in scores]
-    return max(scores_rouge1), max(scores_rouge2), max(scores_rougel)
+    scores_rougeL = [score['rouge-l']['r'] for score in scores]
+    return max(scores_rouge1), max(scores_rouge2), max(scores_rougeL)
 
 
 def aggregate_metrics(reporters):
@@ -185,15 +193,20 @@ def aggregate_metrics(reporters):
     # reporters is a list of teachers or worlds
     m = {}
     m['tasks'] = {}
-    sums = {'accuracy': 0, 'f1': 0, 'loss': 0, 'ppl': 0}
-    if nltkbleu is not None:
-        sums['bleu'] = 0
-    if rouge is not None:
-        sums['rouge-1'] = 0.0
-        sums['rouge-2'] = 0.0
-        sums['rouge-L'] = 0.0
+    sums = {}
     num_tasks = 0
     total = 0
+    for i in range(len(reporters)):
+        task_id = reporters[i].getID()
+        task_report = reporters[i].report()
+        for each_metric, value in task_report.items():
+            if isinstance(value, float):
+                sums[each_metric] = 0.0
+                m[each_metric] = 0.0
+            elif isinstance(value, Number):
+                sums[each_metric] = 0
+                m[each_metric] = 0
+
     for i in range(len(reporters)):
         task_id = reporters[i].getID()
         task_report = reporters[i].report()
@@ -223,16 +236,30 @@ class Metrics(object):
     def __init__(self, opt):
         self.metrics = {}
         self.metrics['cnt'] = 0
-        self.metrics_list = ['mean_rank', 'loss', 'correct', 'f1', 'ppl']
-        if nltkbleu is not None:
-            # only compute bleu if we can
-            self.metrics_list.append('bleu')
-        if rouge is not None:
-            # only compute rouge if we can
-            self.metrics_list.append('rouge-1')
-            self.metrics_list.append('rouge-2')
-            self.metrics_list.append('rouge-L')
-        for k in self.metrics_list:
+        self.metrics_list = set()
+        optional_metrics_list = []
+        metrics_arg = opt.get('metrics', 'default')
+        if metrics_arg == 'default':
+            optional_metrics_list = DEFAULT_METRICS
+        elif metrics_arg == 'all':
+            optional_metrics_list = ALL_METRICS
+        else:
+            optional_metrics_list = set(metrics_arg.split(','))
+            optional_metrics_list.add('correct')
+        for each_m in optional_metrics_list:
+            if each_m.startswith('rouge') and rouge is not None:
+                self.metrics_list.add('rouge')
+            elif each_m == 'bleu' and nltkbleu is None:
+                # only compute bleu if we can
+                pass
+            else:
+                self.metrics_list.add(each_m)
+        metrics_list = (
+            self.metrics_list
+            if 'rouge' not in self.metrics_list
+            else self.metrics_list | ROUGE_METRICS
+        )
+        for k in metrics_list:
             self.metrics[k] = 0.0
             self.metrics[k + '_cnt'] = 0
         self.eval_pr = [1, 5, 10, 100]
@@ -303,22 +330,26 @@ class Metrics(object):
                 self.metrics['correct_cnt'] += 1
 
             # F1 and BLEU metrics.
-            f1 = _f1_score(prediction, labels)
-            bleu = _bleu(prediction, labels)
-            rouge1, rouge2, rougel = _rouge(prediction, labels)
+            if 'f1' in self.metrics_list:
+                f1 = _f1_score(prediction, labels)
+            if 'bleu' in self.metrics_list:
+                bleu = _bleu(prediction, labels)
+            if 'rouge' in self.metrics_list:
+                rouge1, rouge2, rougeL = _rouge(prediction, labels)
 
             with self._lock():
-                self.metrics['f1'] += f1
-                self.metrics['f1_cnt'] += 1
-                if bleu is not None:
+                if 'f1' in self.metrics:
+                    self.metrics['f1'] += f1
+                    self.metrics['f1_cnt'] += 1
+                if 'bleu' in self.metrics:
                     self.metrics['bleu'] += bleu
                     self.metrics['bleu_cnt'] += 1
-                if rouge1 is not None:
+                if 'rouge-L' in self.metrics:
                     self.metrics['rouge-1'] += rouge1
-                    self.metrics['rouge-2'] += rouge2
-                    self.metrics['rouge-L'] += rougel
                     self.metrics['rouge-1_cnt'] += 1
+                    self.metrics['rouge-2'] += rouge2
                     self.metrics['rouge-2_cnt'] += 1
+                    self.metrics['rouge-L'] += rougeL
                     self.metrics['rouge-L_cnt'] += 1
 
         # Ranking metrics.
@@ -327,8 +358,7 @@ class Metrics(object):
         # User-reported metrics
         if 'metrics' in observation:
             for k, v in observation['metrics'].items():
-                if k not in ['correct', 'f1', 'hits@k', 'bleu', 'rouge-1',
-                             'rouge-2', 'rouge-L']:
+                if k not in ALL_METRICS and k != 'rouge':
                     if k in self.metrics_list:
                         with self._lock():
                             self.metrics[k] += v
@@ -341,7 +371,7 @@ class Metrics(object):
                             # no need to lock because not SharedTable
                             if k not in self.metrics:
                                 self.metrics[k] = v
-                                self.metrics_list.append(k)
+                                self.metrics_list.add(k)
                                 self.metrics[k + '_cnt'] = 1.0
                             else:
                                 self.metrics[k] += v
@@ -360,26 +390,25 @@ class Metrics(object):
         m['exs'] = total
         if total > 0:
             if self.flags['print_prediction_metrics']:
-                m['accuracy'] = round_sigfigs(
-                    self.metrics['correct'] / max(1, self.metrics['correct_cnt']),
-                    4
-                )
-                m['f1'] = round_sigfigs(
-                    self.metrics['f1'] / max(1, self.metrics['f1_cnt']),
-                    4
-                )
+                if 'accuracy' in self.metrics_list:
+                    m['accuracy'] = round_sigfigs(
+                        self.metrics['correct'] / max(1, self.metrics['correct_cnt']), 4
+                    )
+                if 'f1' in self.metrics_list:
+                    m['f1'] = round_sigfigs(
+                        self.metrics['f1'] / max(1, self.metrics['f1_cnt']), 4
+                    )
             if self.flags['has_text_cands']:
                 for k in self.eval_pr:
                     m['hits@' + str(k)] = round_sigfigs(
-                        self.metrics['hits@' + str(k)] /
-                        max(1, self.metrics['hits@_cnt']),
-                        3
+                        self.metrics['hits@' + str(k)]
+                        / max(1, self.metrics['hits@_cnt']),
+                        3,
                     )
             for k in self.metrics_list:
                 if self.metrics[k + '_cnt'] > 0 and k != 'correct' and k != 'f1':
                     m[k] = round_sigfigs(
-                        self.metrics[k] / max(1, self.metrics[k + '_cnt']),
-                        4
+                        self.metrics[k] / max(1, self.metrics[k + '_cnt']), 4
                     )
         return m
 
@@ -388,11 +417,18 @@ class Metrics(object):
         # TODO: rename to reset for consistency with rest of ParlAI
         with self._lock():
             self.metrics['cnt'] = 0
-            for k in self.metrics_list:
+            metrics_list = (
+                self.metrics_list
+                if 'rouge' not in self.metrics_list
+                else self.metrics_list | ROUGE_METRICS
+            )
+            for k in metrics_list:
                 v = self.metrics[k]
                 v_typ = type(v)
                 if 'Tensor' in str(v_typ):
                     self.metrics[k].zero_()
+                if isinstance(v, int):
+                    self.metrics[k] = 0
                 else:
                     self.metrics[k] = 0.0
                 self.metrics[k + '_cnt'] = 0
