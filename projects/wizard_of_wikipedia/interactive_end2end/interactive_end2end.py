@@ -3,30 +3,24 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
-"""Wizard agent with 2 parts:
-1. TFIDF retriever (optional, task may already provide knowledge)
-2. Retrieval model, retrieves on possible responses and conditions on
-   retrieved knowledge
 
-NOTE: this model only works for eval, it assumes all training is already done.
+"""
+Hooks up the components for the wizard generator to do live retrieval.
 """
 
 from parlai.core.agents import Agent, create_agent, create_agent_from_shared
-from projects.wizard_of_wikipedia.wizard_transformer_ranker.wizard_transformer_ranker import (
-    WizardTransformerRankerAgent,
-)
+from projects.wizard_of_wikipedia.generator.agents import EndToEndAgent
+
+from parlai.tasks.wizard_of_wikipedia.agents import TOKEN_KNOWLEDGE
 
 import json
 import os
 
 
-class InteractiveRetrievalAgent(Agent):
+class InteractiveEnd2endAgent(Agent):
     def __init__(self, opt, shared=None):
         super().__init__(opt, shared)
         self.debug = opt['debug']
-        self.get_unique = opt['get_unique']
-        if self.get_unique:
-            self.used_messages = []
         self.model_path = os.path.join(
             opt['datapath'],
             'models',
@@ -46,29 +40,23 @@ class InteractiveRetrievalAgent(Agent):
             self.sent_tok = shared['sent_tok']
             self.wiki_map = shared['wiki_map']
 
-        self.id = 'WizardRetrievalInteractiveAgent'
+        self.id = 'WizardGenerativeInteractiveAgent'
         self.ret_history = {}
 
     @staticmethod
     def add_cmdline_args(argparser):
         """Add command-line arguments specifically for this agent."""
-        WizardTransformerRankerAgent.add_cmdline_args(argparser)
-        parser = argparser.add_argument_group('WizardRetrievalInteractive Arguments')
+        EndToEndAgent.add_cmdline_args(argparser)
+        parser = argparser.add_argument_group('InteractiveEnd2end Arguments')
         parser.add_argument(
             '--retriever-model-file',
             type=str,
-            default='models:wikipedia_full/tfidf_retriever/model',
+            default='zoo:wikipedia_full/tfidf_retriever/model',
         )
         parser.add_argument(
             '--responder-model-file',
             type=str,
-            default='models:wizard_of_wikipedia/full_dialogue_retrieval_model/model',
-        )
-        parser.add_argument(
-            '--get-unique',
-            type='bool',
-            default=True,
-            help='get unique responses from the bot',
+            default='zoo:wizard_of_wikipedia/end2end_generator/model',
         )
         parser.add_argument(
             '--num-retrieved',
@@ -90,27 +78,16 @@ class InteractiveRetrievalAgent(Agent):
 
         self._set_up_sent_tok()
         wiki_map_path = os.path.join(self.model_path, 'chosen_topic_to_passage.json')
-        self.wiki_map = json.load(open(wiki_map_path, 'r'))
+        with open(wiki_map_path, 'r') as f:
+            self.wiki_map = json.load(f)
 
     def _set_up_responder(self, opt):
         responder_opts = opt.copy()
         # override these opts to build the responder model
         override_opts = {
             'model_file': opt['responder_model_file'],
+            'model': 'projects.wizard_of_wikipedia.generator.agents:EndToEndAgent',
             'datapath': opt['datapath'],
-            'model': 'projects:wizard_of_wikipedia:wizard_transformer_ranker',
-            'fixed_candidates_path': os.path.join(self.model_path, 'wizard_cands.txt'),
-            'eval_candidates': 'fixed',
-            'n_heads': 6,
-            'ffn_size': 1200,
-            'embeddings_scale': False,
-            'delimiter': ' __SOC__ ',
-            'n_positions': 1000,
-            'legacy': True,
-            'no_cuda': True,
-            'encode_candidate_vecs': True,
-            'batchsize': 1,
-            'interactive_mode': True,
         }
         for k, v in override_opts.items():
             responder_opts[k] = v
@@ -171,7 +148,8 @@ class InteractiveRetrievalAgent(Agent):
             if len(paragraphs) > 2:
                 sentences = self.sent_tok.tokenize(paragraphs[2])
                 for sent in sentences:
-                    retrieved_txt_format.append(' '.join([paragraphs[0], sent]))
+                    delim = ' ' + TOKEN_KNOWLEDGE + ' '
+                    retrieved_txt_format.append(delim.join([paragraphs[0], sent]))
 
         if len(retrieved_txt_format) > 0:
             passages = '\n'.join(retrieved_txt_format)
@@ -262,14 +240,6 @@ class InteractiveRetrievalAgent(Agent):
 
         history['episode_done'] = observation['episode_done']
 
-    def get_unique_reply(self, act):
-        # iterate through text candidates until we find a reply that we
-        # have not used yet
-        for txt in act['text_candidates']:
-            if txt not in self.used_messages:
-                self.used_messages.append(txt)
-                return txt
-
     def act(self):
         obs = self.observation
         # choose a knowledge sentence
@@ -280,9 +250,7 @@ class InteractiveRetrievalAgent(Agent):
         responder_act = self.responder.act()
         if self.debug:
             print('DEBUG: Responder is acting:\n{}'.format(responder_act))
-        responder_act.force_set('id', 'WizardRetrievalInteractiveAgent')
-        if self.get_unique:
-            responder_act.force_set('text', self.get_unique_reply(responder_act))
+        responder_act['id'] = 'WizardEnd2EndInteractiveAgent'
         return responder_act
 
     def share(self):

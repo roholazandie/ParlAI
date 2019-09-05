@@ -129,9 +129,7 @@ class BertClassifierAgent(TorchClassifierAgent):
     def build_model(self):
         """Construct the model."""
         num_classes = len(self.class_list)
-        self.model = BertWrapper(
-            BertModel.from_pretrained(self.pretrained_path), num_classes
-        )
+        return BertWrapper(BertModel.from_pretrained(self.pretrained_path), num_classes)
 
     def init_optim(self, params, optim_states=None, saved_optim_type=None):
         """Initialize the optimizer."""
@@ -143,8 +141,14 @@ class BertClassifierAgent(TorchClassifierAgent):
         obs = super()._set_text_vec(*args, **kwargs)
         if 'text_vec' in obs and self.add_cls_token:
             # insert [CLS] token
-            start_tensor = torch.LongTensor([self.dict.start_idx])
-            obs['text_vec'] = torch.cat([start_tensor, obs['text_vec']], 0)
+            if 'added_start_end_tokens' not in obs:
+                # Sometimes the obs is cached (meaning its the same object
+                # passed the next time) and if so, we would continually re-add
+                # the start/end tokens. So, we need to test if already done
+                start_tensor = torch.LongTensor([self.dict.start_idx])
+                new_text_vec = torch.cat([start_tensor, obs['text_vec']], 0)
+                obs.force_set('text_vec', new_text_vec)
+                obs['added_start_end_tokens'] = True
         return obs
 
     def score(self, batch):

@@ -497,7 +497,7 @@ class TorchAgent(ABC, Agent):
             'value like 0.9 or a comma-separated tuple like 0.9,0.999',
         )
         optim_group.add_argument(
-            '-wd',
+            '-wdecay',
             '--weight-decay',
             type=float,
             default=None,
@@ -650,11 +650,23 @@ class TorchAgent(ABC, Agent):
         """Initialize agent."""
         super().__init__(opt, shared)
         opt = self.opt
+
+        # check for cuda
+        self.use_cuda = not opt['no_cuda'] and torch.cuda.is_available()
+        if self.use_cuda:
+            if not shared:
+                print('[ Using CUDA ]')
+            if not shared and opt['gpu'] != -1:
+                torch.cuda.set_device(opt['gpu'])
+        # indicate whether using fp16
+        self.fp16 = self.use_cuda and self.opt.get('fp16', False)
+
         if shared is None:
             # intitialize any important structures from scratch
             self.replies = {}  # past replies
             self._replies_are_shared = False
             self.dict = self.build_dictionary()
+
             if opt.get('fp16'):
                 # Volta cores revert to FP32 hardware if tensors are not multiples
                 # of 8 in all dimensions. This INCLUDES the embeddings layer! As
@@ -675,6 +687,8 @@ class TorchAgent(ABC, Agent):
             # copy initialized data from shared table
             self.opt = shared['opt']
             self.dict = shared['dict']
+            self.model = shared['model']
+            self.criterion = shared['criterion']
             self.metrics = shared['metrics']
             if self.opt['batchsize'] == 1 or self.opt['interactive_mode']:
                 # if we're not using batching (e.g. mturk), then replies really need
@@ -687,16 +701,6 @@ class TorchAgent(ABC, Agent):
 
         if opt.get('numthreads', 1) > 1:
             torch.set_num_threads(1)
-
-        # check for cuda
-        self.use_cuda = not opt['no_cuda'] and torch.cuda.is_available()
-        if self.use_cuda:
-            if not shared:
-                print('[ Using CUDA ]')
-            if not shared and opt['gpu'] != -1:
-                torch.cuda.set_device(opt['gpu'])
-        # indicate whether using fp16
-        self.fp16 = self.use_cuda and self.opt.get('fp16', False)
 
         # Default to the class name, sans "Agent". child can override
         self.id = type(self).__name__.replace("Agent", "")
@@ -794,6 +798,10 @@ class TorchAgent(ABC, Agent):
                     opt['dict_file'] = init_model + '.dict'
 
         return init_model, is_finetune
+
+    def build_model(self):
+        """Construct the model and return it."""
+        raise NotImplementedError('not implemented for this class')
 
     def init_optim(self, params, optim_states=None, saved_optim_type=None):
         """
@@ -1165,8 +1173,8 @@ class TorchAgent(ABC, Agent):
         shared['metrics'] = self.metrics
 
         shared['dict'] = self.dict
-        if hasattr(self, 'model'):
-            shared['model'] = self.model
+        shared['model'] = self.model
+        shared['criterion'] = self.criterion
         shared['opt'] = self.opt
         shared['replies'] = self.replies
         return shared
@@ -1244,20 +1252,26 @@ class TorchAgent(ABC, Agent):
 
         Useful to override to change vectorization behavior
         """
+
         if 'text' not in obs:
             return obs
 
         if 'text_vec' not in obs:
             # text vec is not precomputed, so we set it using the history
-            obs['full_text'] = history.get_history_str()
-            if obs['text'] is not None:
+            history_string = history.get_history_str()
+            # when text not exist, we get text_vec from history string
+            # history could be none if it is an image task and 'text'
+            # filed is be empty. We don't want this
+            if history_string is None:
+                return obs
+            obs['full_text'] = history_string
+            if history_string:
                 obs['text_vec'] = history.get_history_vec()
 
         # check truncation
-        if 'text_vec' in obs:
+        if obs.get('text_vec') is not None:
             truncated_vec = self._check_truncate(obs['text_vec'], truncate, True)
             obs.force_set('text_vec', torch.LongTensor(truncated_vec))
-
         return obs
 
     def _set_label_vec(self, obs, add_start, add_end, truncate):
@@ -1410,7 +1424,7 @@ class TorchAgent(ABC, Agent):
 
         # TEXT
         xs, x_lens = None, None
-        if any('text_vec' in ex for ex in exs):
+        if any(ex.get('text_vec') is not None for ex in exs):
             _xs = [ex.get('text_vec', self.EMPTY) for ex in exs]
             xs, x_lens = padded_tensor(
                 _xs, self.NULL_IDX, self.use_cuda, fp16friendly=self.opt.get('fp16')
