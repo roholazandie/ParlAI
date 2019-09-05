@@ -308,15 +308,7 @@ class TorchGeneratorModel(nn.Module, ABC):
 
         if ys is not None:
             # use teacher forcing
-            #scores, preds = self.decode_forced(encoder_states, ys)
-            all_t = torch.empty(1, ys.size(0)).cuda()
-            preds = 0
-            for y in ys.unbind(dim=1): #unbind for different canidates
-                latent = self.decode_latent(encoder_states, y)
-                #all_t = torch.stack([all_t, latent])
-                all_t = torch.cat([all_t, latent.unsqueeze(0)], dim=0)
-            scores = all_t[1:]
-            scores = scores.transpose(1, 0)
+            scores, preds = self.decode_forced(encoder_states, ys)
         else:
             scores, preds = self.decode_greedy(
                 encoder_states, bsz, maxlen or self.longest_label

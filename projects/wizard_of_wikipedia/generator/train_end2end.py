@@ -36,6 +36,7 @@ if __name__ == '__main__':
         embedding_type='fasttext',
         beam_size=1,
         skip_generation=False,
-        batchsize=64,
+        batchsize=2,
     )
+    #add num_epochs
     TrainLoop(parser.parse_args()).train()
