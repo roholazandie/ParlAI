@@ -8,8 +8,6 @@
 import argparse
 import importlib
 import os
-import pickle
-import json
 import sys as _sys
 import datetime
 import parlai
@@ -18,7 +16,7 @@ import git
 from parlai.core.agents import get_agent_module, get_task_module
 from parlai.core.build_data import modelzoo_path
 from parlai.tasks.tasks import ids_to_tasks
-from parlai.core.utils import Opt, load_opt_file
+from parlai.utils.misc import Opt, load_opt_file
 
 from typing import List, Optional
 
@@ -442,6 +440,25 @@ class ParlaiParser(argparse.ArgumentParser):
         mturk.set_defaults(is_debug=False)
         mturk.set_defaults(verbose=False)
 
+    def add_websockets_args(self):
+        """Add websocket arguments."""
+        websockets = self.add_argument_group('Websockets')
+        websockets.add_argument(
+            '--debug',
+            dest='is_debug',
+            action='store_true',
+            help='print and log all server interactions and messages',
+        )
+        websockets.add_argument(
+            '--config-path',
+            default=None,
+            type=str,
+            help='/path/to/config/file for a given task.',
+        )
+        websockets.add_argument(
+            '--port', default=35496, type=int, help='Port to run the websocket handler'
+        )
+
     def add_messenger_args(self):
         """Add Facebook Messenger arguments."""
         messenger = self.add_argument_group('Facebook Messenger')
@@ -492,6 +509,12 @@ class ParlaiParser(argparse.ArgumentParser):
             default=False,
             help='Run the server locally on this server rather than setting up'
             ' a heroku server.',
+        )
+        messenger.add_argument(
+            '--config-path',
+            default=None,
+            type=str,
+            help='/path/to/config/file for a given task.',
         )
 
         messenger.set_defaults(is_debug=False)
@@ -807,7 +830,7 @@ class ParlaiParser(argparse.ArgumentParser):
 
         # find which image mode specified if any, and add additional arguments
         image_mode = parsed.get('image_mode', None)
-        if image_mode is not None and image_mode != 'none':
+        if image_mode is not None and image_mode != 'no_image_model':
             self.add_image_args(image_mode)
 
         # find which task specified if any, and add its specific arguments

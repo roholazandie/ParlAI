@@ -27,11 +27,11 @@ import os
 from torch import optim
 
 from parlai.core.agents import Agent
-from parlai.core.thread_utils import SharedTable
+from parlai.utils.thread import SharedTable
 from parlai.core.build_data import modelzoo_path
 from parlai.core.dict import DictionaryAgent
 from parlai.core.message import Message
-from parlai.core.utils import (
+from parlai.utils.misc import (
     AttrDict,
     argsort,
     fp16_optimizer_wrapper,
@@ -39,7 +39,6 @@ from parlai.core.utils import (
     warn_once,
     round_sigfigs,
 )
-from parlai.core.distributed_utils import is_primary_worker
 
 try:
     import torch
@@ -999,13 +998,45 @@ class TorchAgent(ABC, Agent):
         if hasattr(self, 'scheduler') and self.scheduler is not None:
             current_lr = round_sigfigs(self.optimizer.param_groups[0]['lr'], 4)
             metrics['lr'] = round_sigfigs(current_lr, 4)
-        metrics['num_updates'] = self._number_training_updates
+        metrics['total_train_updates'] = self._number_training_updates
 
         steps = self.metrics['updates']
         if steps > 0 and self.opt.get('gradient_clip', -1) > 0:
             metrics['gnorm'] = round_sigfigs(self.metrics['gnorm'] / steps, 4)
             metrics['clip'] = round_sigfigs(self.metrics['clip'] / steps, 2)
+
+        if self.use_cuda:
+            metrics['gpu_mem_percent'] = round_sigfigs(self._gpu_usage(), sigfigs=3)
+
         return metrics
+
+    def _gpu_usage(self):
+        """
+        Compute GPU memory usage.
+
+        Includes both allocated and cached memory; this should be close to the
+        output of nvidia-smi, but not reflect of how much is currently demanded
+        by the program. It may be viewed as a rough approximation of
+        worst-case-until-now.
+
+        :return: Percent of allocated GPU memory as a fraction of available.
+        """
+        if not self.use_cuda:
+            return None
+        if self.opt['gpu'] == -1:
+            # use all gpus available locally
+            devices = range(torch.cuda.device_count())
+        else:
+            devices = [self.opt['gpu']]
+        memory_avail = 0
+        memory_used = 0
+        for dev in devices:
+            props = torch.cuda.get_device_properties(dev)
+            memory_avail += props.total_memory
+            memory_used += torch.cuda.memory_allocated(dev) + torch.cuda.memory_cached(
+                dev
+            )
+        return memory_used / memory_avail
 
     def _is_lr_warming_up(self):
         """Check if we're warming up the learning rate."""
@@ -1140,10 +1171,6 @@ class TorchAgent(ABC, Agent):
         :param emb_type:
             pretrained embedding type
         """
-        if not is_primary_worker():
-            # we're in distributed mode, copying embeddings in the workers
-            # slows things down considerably
-            return
         embs, name = self._get_embtype(emb_type)
         cnt = 0
         for w, i in self.dict.tok2ind.items():
@@ -1515,12 +1542,11 @@ class TorchAgent(ABC, Agent):
         """
         if output is None:
             return batch_reply
-        if output.text is not None:
-            for i, response in zip(valid_inds, output.text):
-                batch_reply[i]['text'] = response
-        if output.text_candidates is not None:
-            for i, cands in zip(valid_inds, output.text_candidates):
-                batch_reply[i]['text_candidates'] = cands
+        for k, v in output.items():
+            if v is None:
+                continue
+            for i, sub_val in zip(valid_inds, v):
+                batch_reply[i][k] = sub_val
         return batch_reply
 
     def last_reply(self, use_reply='label'):
@@ -1745,7 +1771,7 @@ class TorchAgent(ABC, Agent):
 
     def set_interactive_mode(self, mode, shared):
         """Set interactive mode on or off."""
-        if shared is None:
+        if shared is None and mode:
             # Only print in the non-shared version.
             print("[" + self.id + ': full interactive mode on.' + ']')
 

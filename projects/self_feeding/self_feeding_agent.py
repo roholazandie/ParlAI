@@ -19,7 +19,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from parlai.core.torch_agent import TorchAgent, Output
-from parlai.core.utils import round_sigfigs, warn_once, padded_tensor
+from parlai.utils.misc import round_sigfigs, warn_once, padded_tensor
 
 from parlai.agents.transformer.transformer import TransformerRankerAgent
 
@@ -477,6 +477,16 @@ class SelfFeedingAgent(TransformerRankerAgent):
             cands, cand_vecs, label_inds = self._build_candidates(
                 batch, source=self.opt['eval_candidates'], mode='eval'
             )
+            if self.encode_candidate_vecs and self.eval_candidates in [
+                'fixed',
+                'vocab',
+            ]:
+                # if we cached candidate encodings for a fixed list of candidates,
+                # pass those into the score_candidates function
+                if self.eval_candidates == 'fixed':
+                    cand_vecs = self.fixed_candidate_encs
+                elif self.eval_candidates == 'vocab':
+                    cand_vecs = self.vocab_candidate_encs
 
         scores = self.model.score_dialog(batch.text_vec, cand_vecs)
         _, ranks = scores.sort(1, descending=True)

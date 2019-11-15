@@ -7,9 +7,9 @@
 """Torch Classifier Agents classify text into a fixed set of labels."""
 
 
-from parlai.core.distributed_utils import is_distributed
+from parlai.utils.distributed import is_distributed
 from parlai.core.torch_agent import TorchAgent, Output
-from parlai.core.utils import round_sigfigs, warn_once
+from parlai.utils.misc import round_sigfigs, warn_once
 from collections import defaultdict
 
 import torch
@@ -141,13 +141,13 @@ class TorchClassifierAgent(TorchAgent):
             if init_model:
                 print('Loading existing model parameters from ' + init_model)
                 self.load(init_model)
-        if self.use_cuda:
-            if self.opt['data_parallel']:
-                if is_distributed():
-                    raise ValueError(
-                        'Cannot combine --data-parallel and distributed mode'
-                    )
-                self.model = torch.nn.DataParallel(self.model)
+            if self.use_cuda:
+                if self.opt['data_parallel']:
+                    if is_distributed():
+                        raise ValueError(
+                            'Cannot combine --data-parallel and distributed mode'
+                        )
+                    self.model = torch.nn.DataParallel(self.model)
         if shared:
             # We don't use get here because hasattr is used on optimizer later.
             if 'optimizer' in shared:
