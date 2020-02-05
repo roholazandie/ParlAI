@@ -9,7 +9,8 @@ from parlai.scripts.train_model import setup_args, TrainLoop
 if __name__ == '__main__':
     parser = setup_args()
     parser.set_defaults(
-        task='wizard_of_wikipedia:generator:random_split',
+        #task='wizard_of_wikipedia:generator:random_split',
+        task='alexa_topical:generator:random_split',
         model='projects.wizard_of_wikipedia.generator.agents:EndToEndAgent',
         model_file='/tmp/end2end_generator/model',
         dict_lower=True,
